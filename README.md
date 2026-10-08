@@ -104,6 +104,17 @@ la portée `https://www.googleapis.com/auth/gmail.send`, autorisez l’accès av
 le compte expéditeur et demandez un accès hors ligne pour obtenir un
 `refresh_token`. Si l’application OAuth reste en mode test, ce jeton peut
 expirer après sept jours et nécessiter une nouvelle autorisation.
+
+Si Google affiche **403: access_denied**, ouvrez dans le projet Google Cloud
+associé au `google_client_id` la page **Google Auth Platform > Audience**.
+Pour une application externe en mode test, ajoutez l’adresse Gmail expéditrice
+à **Test users**, enregistrez, puis relancez l’autorisation dans OAuth
+Playground avec ce même compte. Dans ses paramètres, activez **Use your own
+OAuth credentials** et vérifiez que le client ID et le client secret
+correspondent aux secrets de l’application. L’URI de redirection autorisée doit
+inclure `https://developers.google.com/oauthplayground`. Les comptes Gmail
+personnels utilisent généralement le type d’audience **External**. Le passage
+en production peut demander une validation Google pour la portée Gmail.
 Configurez les secrets suivants dans **Manage app > Settings > Secrets** sur
 Streamlit Community Cloud :
 
