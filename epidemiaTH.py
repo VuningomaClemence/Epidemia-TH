@@ -3848,7 +3848,6 @@ def main():
                     )
 
                     fig_prov.update_layout(
-                        title=f"Dynamique Globale - Province de {sim_data['province']}",
                         xaxis=dict(
                             title="Jour de simulation", showgrid=False, showspikes=True,
                             spikemode="across", spikesnap="cursor",
@@ -3876,6 +3875,7 @@ def main():
                             margin=dict(l=52, r=24, t=76, b=108)
                         )
 
+                    st.markdown(f"#### Dynamique globale — Province de {sim_data['province']}")
                     st.plotly_chart(fig_prov, use_container_width=True, config=config_hd)
 
                 with col_right:
