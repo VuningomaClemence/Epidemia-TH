@@ -493,8 +493,8 @@ def revoquer_session_persistante(db_path, token):
         conn.close()
 
 
-def ecrire_cookie_session(token=None):
-    """Écrit ou efface le cookie de session dans le navigateur puis recharge l'application."""
+def ecrire_cookie_session(token=None, recharger=True):
+    """Écrit ou efface le cookie de session dans le navigateur."""
     secure = (
         st.context.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() == "https"
         or st.context.headers.get("Origin", "").lower().startswith("https://")
@@ -504,9 +504,13 @@ def ecrire_cookie_session(token=None):
     if secure:
         cookie += "; Secure"
 
+    script_rechargement = (
+        "window.setTimeout(() => window.location.reload(), 150);"
+        if recharger else ""
+    )
     st.html(
         f"<script>document.cookie = {json.dumps(cookie)}; "
-        "window.setTimeout(() => window.location.reload(), 150);</script>",
+        f"{script_rechargement}</script>",
         unsafe_allow_javascript=True
     )
 
@@ -1060,7 +1064,8 @@ def rendre_page_authentification(db_path):
                         for key in ("id", "username", "email", "nom_complet", "organisation", "role", "statut")
                     }
                     st.session_state["utilisateur_connecte"] = user_session
-                    ecrire_cookie_session(session_token)
+                    st.session_state["epidemia_session_token"] = session_token
+                    ecrire_cookie_session(session_token, recharger=False)
                     enregistrer_activite(
                         db_path=db_path,
                         user_id=user_session["id"],
@@ -1069,7 +1074,7 @@ def rendre_page_authentification(db_path):
                         action="CONNEXION",
                         details=f"Connexion réussie de {user_session['nom_complet']} ({user_session['role']})"
                     )
-                    st.success(f"Bienvenue {user['nom_complet']} ! Redirection en cours...")
+                    st.rerun()
                 elif code_statut == "en_attente":
                     if user:
                         enregistrer_activite(
@@ -3401,14 +3406,17 @@ def main():
         st.stop()
 
     # VÉRIFICATION DE L'AUTHENTIFICATION & DES PERMISSIONS D'ACCÈS
-    session_token = st.context.cookies.get(AUTH_SESSION_COOKIE)
+    session_token_cookie = st.context.cookies.get(AUTH_SESSION_COOKIE)
+    session_token = session_token_cookie or st.session_state.get("epidemia_session_token")
     utilisateur_actuel = obtenir_utilisateur_session(chemin_db, session_token)
     if utilisateur_actuel:
         st.session_state["utilisateur_connecte"] = utilisateur_actuel
+        st.session_state["epidemia_session_token"] = session_token
     else:
         st.session_state.pop("utilisateur_connecte", None)
-        if session_token:
-            revoquer_session_persistante(chemin_db, session_token)
+        st.session_state.pop("epidemia_session_token", None)
+        if session_token_cookie:
+            revoquer_session_persistante(chemin_db, session_token_cookie)
             ecrire_cookie_session()
 
     if not utilisateur_actuel:
@@ -3491,7 +3499,10 @@ def main():
                         st.error(msg_mdp)
 
         if st.button("Déconnexion", key="btn_deconnexion_sidebar", use_container_width=True):
-            session_token = st.context.cookies.get(AUTH_SESSION_COOKIE)
+            session_token = (
+                st.context.cookies.get(AUTH_SESSION_COOKIE)
+                or st.session_state.get("epidemia_session_token")
+            )
             enregistrer_activite(
                 db_path=chemin_db,
                 user_id=utilisateur_actuel["id"],
@@ -3502,6 +3513,7 @@ def main():
             )
             revoquer_session_persistante(chemin_db, session_token)
             st.session_state.pop("utilisateur_connecte", None)
+            st.session_state.pop("epidemia_session_token", None)
             st.session_state.pop("sim_data", None)
             ecrire_cookie_session()
             st.rerun()
