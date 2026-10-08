@@ -1184,7 +1184,7 @@ def rendre_page_authentification(db_path):
                     }
                     st.session_state["utilisateur_connecte"] = user_session
                     st.session_state["epidemia_session_token"] = session_token
-                    ecrire_cookie_session(session_token, recharger=False)
+                    ecrire_cookie_session(session_token)
                     enregistrer_activite(
                         db_path=db_path,
                         user_id=user_session["id"],
@@ -1193,7 +1193,7 @@ def rendre_page_authentification(db_path):
                         action="CONNEXION",
                         details=f"Connexion réussie de {user_session['nom_complet']} ({user_session['role']})"
                     )
-                    st.rerun()
+                    st.stop()
                 elif code_statut == "en_attente":
                     if user:
                         enregistrer_activite(
@@ -3547,11 +3547,26 @@ def main():
 
     # VÉRIFICATION DE L'AUTHENTIFICATION & DES PERMISSIONS D'ACCÈS
     session_token_cookie = st.context.cookies.get(AUTH_SESSION_COOKIE)
-    session_token = session_token_cookie or st.session_state.get("epidemia_session_token")
-    utilisateur_actuel = obtenir_utilisateur_session(chemin_db, session_token)
+    session_token_session = st.session_state.get("epidemia_session_token")
+    session_token = session_token_cookie or session_token_session
+
+    utilisateur_actuel = None
+    if session_token:
+        utilisateur_actuel = obtenir_utilisateur_session(chemin_db, session_token)
+
+    # Fallback de robustesse : si le navigateur n'a pas encore réémis le cookie lors d'un
+    # rechargement ou d'un rerun, on conserve le statut de session déjà connu au lieu de
+    # forcer la page de connexion.
+    if not utilisateur_actuel and session_token_session:
+        utilisateur_actuel = obtenir_utilisateur_session(chemin_db, session_token_session)
+        if utilisateur_actuel:
+            session_token = session_token_session
+
     if utilisateur_actuel:
         st.session_state["utilisateur_connecte"] = utilisateur_actuel
         st.session_state["epidemia_session_token"] = session_token
+        if session_token_cookie != session_token:
+            ecrire_cookie_session(session_token, recharger=False)
     else:
         st.session_state.pop("utilisateur_connecte", None)
         st.session_state.pop("epidemia_session_token", None)
