@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: epidemia-th
+    runtime: python
+    plan: starter
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python start_render.py
+    disk:
+      name: epidemia-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: EPIDEMIA_DB_PATH
+        value: /var/data/epidemia.db
