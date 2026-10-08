@@ -91,48 +91,23 @@ dans ce README. Un utilisateur sans compte peut soumettre une demande d’accès
 qui doit être approuvée par un administrateur avant la connexion.
 
 Après une approbation ou un rejet, Epidemia envoie un courriel au demandeur.
-L’envoi utilise l’API Gmail par HTTPS et OAuth 2.0 ; il n’utilise pas SMTP ni
-de mot de passe d’application. Dans Google Cloud Console, créez un projet,
-activez Gmail API, configurez l’écran de consentement OAuth, puis créez un
-identifiant OAuth de type « Application Web ». Ajoutez
-`https://developers.google.com/oauthplayground` comme URI de redirection et
-ajoutez le compte expéditeur comme utilisateur test si l’application OAuth
-reste en mode test.
-
-Dans OAuth Playground, configurez vos propres identifiants OAuth, sélectionnez
-la portée `https://www.googleapis.com/auth/gmail.send`, autorisez l’accès avec
-le compte expéditeur et demandez un accès hors ligne pour obtenir un
-`refresh_token`. Si l’application OAuth reste en mode test, ce jeton peut
-expirer après sept jours et nécessiter une nouvelle autorisation.
-
-Si Google affiche **403: access_denied**, ouvrez dans le projet Google Cloud
-associé au `google_client_id` la page **Google Auth Platform > Audience**.
-Pour une application externe en mode test, ajoutez l’adresse Gmail expéditrice
-à **Test users**, enregistrez, puis relancez l’autorisation dans OAuth
-Playground avec ce même compte. Dans ses paramètres, activez **Use your own
-OAuth credentials** et vérifiez que le client ID et le client secret
-correspondent aux secrets de l’application. L’URI de redirection autorisée doit
-inclure `https://developers.google.com/oauthplayground`. Les comptes Gmail
-personnels utilisent généralement le type d’audience **External**. Le passage
-en production peut demander une validation Google pour la portée Gmail.
+L’envoi utilise l’API HTTPS de Brevo ; il ne dépend ni de SMTP ni d’OAuth
+Google. Créez une clé API dans Brevo et vérifiez l’adresse expéditrice dans les
+paramètres d’expéditeur avant de configurer les secrets.
 Configurez les secrets suivants dans **Manage app > Settings > Secrets** sur
 Streamlit Community Cloud :
 
 ```toml
 [email]
-sender_email = "votre-adresse@gmail.com"
-google_client_id = "votre-client-id"
-google_client_secret = "votre-client-secret"
-google_refresh_token = "votre-refresh-token"
+sender_email = "adresse-expeditrice-verifiee"
+brevo_api_key = "votre-cle-api-brevo"
 ```
 
 Les secrets peuvent aussi être définis à la racine, sans section `[email]` :
 
 ```toml
-sender_email = "votre-adresse@gmail.com"
-google_client_id = "votre-client-id"
-google_client_secret = "votre-client-secret"
-google_refresh_token = "votre-refresh-token"
+sender_email = "adresse-expeditrice-verifiee"
+brevo_api_key = "votre-cle-api-brevo"
 ```
 
 En local, placez la même configuration dans `.streamlit/secrets.toml` à la

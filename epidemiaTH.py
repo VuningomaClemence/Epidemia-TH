@@ -1,5 +1,4 @@
 import datetime
-import base64
 from email.message import EmailMessage
 import hashlib
 import io
@@ -7,7 +6,6 @@ import json
 import secrets
 import sqlite3
 import urllib.error
-import urllib.parse
 import urllib.request
 import zipfile
 
@@ -685,27 +683,24 @@ def obtenir_tous_utilisateurs(db_path):
 
 
 def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
-    """Envoie la décision d'accès via l'API Gmail HTTPS et OAuth 2.0."""
+    """Envoie la décision d'accès via l'API HTTPS de Brevo."""
     try:
         try:
             configuration = st.secrets["email"]
         except KeyError:
             configuration = st.secrets
         adresse_expediteur = configuration["sender_email"].strip()
-        client_id = configuration["google_client_id"].strip()
-        client_secret = configuration["google_client_secret"].strip()
-        refresh_token = configuration["google_refresh_token"].strip()
+        cle_api = configuration["brevo_api_key"].strip()
     except (KeyError, FileNotFoundError, StreamlitSecretNotFoundError):
         return False, (
-            "Secrets OAuth Gmail manquants. Configurez sender_email, google_client_id, "
-            "google_client_secret et google_refresh_token dans la section [email] "
+            "Secrets Brevo manquants. Configurez sender_email et brevo_api_key "
+            "dans la section [email] "
             "ou à la racine des secrets Streamlit."
         )
 
-    if not all((adresse_expediteur, client_id, client_secret, refresh_token)):
+    if not adresse_expediteur or not cle_api:
         return False, (
-            "Les secrets OAuth Gmail sont incomplets. Vérifiez les quatre valeurs "
-            "requis dans les secrets Streamlit."
+            "Les secrets Brevo sont incomplets. Vérifiez sender_email et brevo_api_key."
         )
 
     decision = "approuvée" if approuve else "rejetée"
@@ -726,67 +721,40 @@ def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
         + "L'équipe Epidemia"
     )
 
-    requete_token = urllib.request.Request(
-        "https://oauth2.googleapis.com/token",
-        data=urllib.parse.urlencode(
+    requete_envoi = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(
             {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
+                "sender": {"name": "Epidemia", "email": adresse_expediteur},
+                "to": [{"email": email_destinataire, "name": nom_complet}],
+                "subject": message["Subject"],
+                "textContent": message.get_content(),
             }
         ).encode("utf-8"),
-        headers={"content-type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(requete_token, timeout=20) as reponse:
-            donnees_token = json.loads(reponse.read().decode("utf-8"))
-        jeton_acces = donnees_token.get("access_token")
-        if not jeton_acces:
-            return False, (
-                "Google OAuth n'a pas fourni de jeton d'accès. Vérifiez les identifiants "
-                "et le jeton de renouvellement configurés."
-            )
-    except urllib.error.HTTPError as erreur:
-        return False, (
-            f"Google OAuth a refusé l'authentification (HTTP {erreur.code}). "
-            "Vérifiez le client OAuth et le jeton de renouvellement."
-        )
-    except (urllib.error.URLError, TimeoutError, OSError) as erreur:
-        return False, (
-            "La connexion HTTPS à Google OAuth a échoué "
-            f"({type(erreur).__name__})."
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return False, "Google OAuth a renvoyé une réponse invalide lors de l'authentification."
-
-    message_brut = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
-    requete_envoi = urllib.request.Request(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-        data=json.dumps({"raw": message_brut}).encode("utf-8"),
         headers={
-            "authorization": f"Bearer {jeton_acces}",
+            "accept": "application/json",
+            "api-key": cle_api,
             "content-type": "application/json",
         },
         method="POST",
     )
     try:
-        with urllib.request.urlopen(requete_envoi, timeout=20):
-            pass
+        with urllib.request.urlopen(requete_envoi, timeout=20) as reponse:
+            if not 200 <= reponse.status < 300:
+                return False, f"Brevo a refusé le courriel (HTTP {reponse.status})."
     except urllib.error.HTTPError as erreur:
         return False, (
-            f"L'API Gmail a refusé le courriel (HTTP {erreur.code}). Vérifiez que Gmail API "
-            "est activée et que le compte OAuth a l'autorisation gmail.send."
+            f"Brevo a refusé le courriel (HTTP {erreur.code}). Vérifiez la clé API "
+            "et que l'adresse expéditrice est vérifiée dans Brevo."
         )
     except (urllib.error.URLError, TimeoutError, OSError) as erreur:
         return False, (
-            "La connexion HTTPS à l'API Gmail a échoué "
-            f"({type(erreur).__name__}). Vérifiez dans Gmail si le message a été accepté "
+            "La connexion HTTPS à Brevo a échoué "
+            f"({type(erreur).__name__}). Vérifiez dans Brevo si le message a été accepté "
             "avant de réessayer."
         )
 
-    return True, f"L'API Gmail a accepté le courriel destiné à {email_destinataire}."
+    return True, f"Brevo a accepté le courriel destiné à {email_destinataire}."
 
 
 def approuver_utilisateur(db_path, user_id, admin_user, role_choisi="utilisateur"):
