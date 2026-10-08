@@ -4,9 +4,9 @@ import hashlib
 import io
 import json
 import secrets
+import smtplib
+import ssl
 import sqlite3
-import urllib.error
-import urllib.request
 import zipfile
 
 from epidemia_app.provinces import (
@@ -683,24 +683,28 @@ def obtenir_tous_utilisateurs(db_path):
 
 
 def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
-    """Envoie par l'API Brevo la décision d'accès configurée dans les secrets."""
+    """Envoie par Gmail SMTP la décision d'accès configurée dans les secrets."""
     try:
         configuration = st.secrets["email"]
         adresse_expediteur = configuration["sender_email"].strip()
-        cle_api = configuration["brevo_api_key"].strip()
+        mot_de_passe_application = configuration["app_password"].replace(" ", "")
     except (KeyError, FileNotFoundError, StreamlitSecretNotFoundError):
         return False, (
-            "Configurez [email].sender_email et [email].brevo_api_key dans les secrets Streamlit "
+            "Configurez [email].sender_email et [email].app_password dans les secrets Streamlit "
             "pour activer les notifications."
         )
 
-    if not adresse_expediteur or not cle_api:
+    if not adresse_expediteur or not mot_de_passe_application:
         return False, (
-            "Les secrets Brevo sont incomplets : renseignez sender_email et brevo_api_key."
+            "Les secrets Gmail sont incomplets : renseignez sender_email et app_password."
         )
 
     decision = "approuvée" if approuve else "rejetée"
-    contenu = (
+    message = EmailMessage()
+    message["Subject"] = f"Votre demande d'accès à Epidemia a été {decision}"
+    message["From"] = adresse_expediteur
+    message["To"] = email_destinataire
+    message.set_content(
         f"Bonjour {nom_complet},\n\n"
         f"Votre demande d'accès à la plateforme Epidemia a été {decision} "
         "par l'administrateur.\n\n"
@@ -712,39 +716,48 @@ def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
         )
         + "L'équipe Epidemia"
     )
-    donnees = {
-        "sender": {"name": "Epidemia", "email": adresse_expediteur},
-        "to": [{"email": email_destinataire, "name": nom_complet}],
-        "subject": f"Votre demande d'accès à Epidemia a été {decision}",
-        "textContent": contenu,
-    }
-    requete = urllib.request.Request(
-        "https://api.brevo.com/v3/smtp/email",
-        data=json.dumps(donnees).encode("utf-8"),
-        headers={
-            "accept": "application/json",
-            "api-key": cle_api,
-            "content-type": "application/json",
-        },
-        method="POST",
-    )
+
+    etape_smtp = "connexion au serveur"
     try:
-        with urllib.request.urlopen(requete, timeout=20) as reponse:
-            if not 200 <= reponse.status < 300:
-                return False, f"Brevo a refusé l'envoi (HTTP {reponse.status})."
-    except urllib.error.HTTPError as erreur:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as serveur:
+            etape_smtp = "négociation TLS"
+            serveur.ehlo()
+            serveur.starttls(context=ssl.create_default_context())
+            serveur.ehlo()
+            etape_smtp = "authentification"
+            serveur.login(adresse_expediteur, mot_de_passe_application)
+            etape_smtp = "envoi du message"
+            serveur.send_message(message)
+    except (OSError, smtplib.SMTPServerDisconnected) as erreur:
+        if etape_smtp == "envoi du message":
+            return False, (
+                "La connexion Gmail a été coupée pendant l'envoi. "
+                "Vérifiez si le demandeur a reçu le courriel avant de relancer une notification."
+            )
+
+        try:
+            with smtplib.SMTP_SSL(
+                "smtp.gmail.com",
+                465,
+                timeout=20,
+                context=ssl.create_default_context(),
+            ) as serveur:
+                serveur.login(adresse_expediteur, mot_de_passe_application)
+                serveur.send_message(message)
+        except (OSError, smtplib.SMTPException) as erreur_repli:
+            return False, (
+                "La connexion Gmail a échoué sur le port 587 "
+                f"({type(erreur).__name__}) et sur le port 465 "
+                f"({type(erreur_repli).__name__})."
+            )
+        return True, f"Un courriel a été envoyé à {email_destinataire} via le port TLS 465."
+    except smtplib.SMTPException as erreur:
         return False, (
-            f"Brevo a refusé l'envoi (HTTP {erreur.code}). Vérifiez la clé API "
-            "et que l'adresse expéditrice est vérifiée dans Brevo."
-        )
-    except (urllib.error.URLError, TimeoutError, OSError) as erreur:
-        return False, (
-            "La connexion à l'API Brevo a échoué "
-            f"({type(erreur).__name__}). Si le problème survient à nouveau, "
-            "vérifiez dans Brevo si le courriel a été accepté avant de réessayer."
+            f"L'envoi du courriel a échoué pendant l'étape « {etape_smtp} » "
+            f"({type(erreur).__name__})."
         )
 
-    return True, f"Brevo a accepté le courriel destiné à {email_destinataire}."
+    return True, f"Un courriel a été envoyé à {email_destinataire}."
 
 
 def approuver_utilisateur(db_path, user_id, admin_user, role_choisi="utilisateur"):

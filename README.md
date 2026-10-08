@@ -91,20 +91,23 @@ dans ce README. Un utilisateur sans compte peut soumettre une demande d’accès
 qui doit être approuvée par un administrateur avant la connexion.
 
 Après une approbation ou un rejet, Epidemia envoie un courriel au demandeur.
-L’envoi utilise l’API HTTPS de Brevo. Dans Brevo, créez une clé API et vérifiez
-l’adresse e-mail expéditrice avant de configurer les secrets ci-dessous.
+L’envoi utilise Gmail SMTP et nécessite un mot de passe d’application Gmail
+(l’authentification à deux facteurs doit être activée sur le compte expéditeur).
+L’application utilise STARTTLS sur le port 587, puis essaie TLS sur le port 465
+si la connexion échoue avant l’envoi. Streamlit Cloud doit autoriser les
+connexions SMTP sortantes pour que les notifications puissent être envoyées.
 Configurez les secrets suivants dans **Manage app > Settings > Secrets** sur
 Streamlit Community Cloud :
 
 ```toml
 [email]
-sender_email = "adresse-expeditrice-verifiee"
-brevo_api_key = "votre-cle-api-brevo"
+sender_email = "votre-adresse@gmail.com"
+app_password = "mot-de-passe-d-application"
 ```
 
 En local, placez la même configuration dans `.streamlit/secrets.toml` à la
 racine du projet. Ce fichier ne doit jamais être ajouté au dépôt. Si les secrets
-ne sont pas configurés ou si Brevo refuse l’envoi, la décision d’accès reste
+ne sont pas configurés ou si Gmail refuse l’envoi, la décision d’accès reste
 enregistrée et l’administrateur voit un avertissement dans le panneau.
 
 Si l’application est lancée avec une base ne contenant encore aucun compte
