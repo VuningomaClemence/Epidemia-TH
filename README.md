@@ -91,23 +91,35 @@ dans ce README. Un utilisateur sans compte peut soumettre une demande d’accès
 qui doit être approuvée par un administrateur avant la connexion.
 
 Après une approbation ou un rejet, Epidemia envoie un courriel au demandeur.
-L’envoi utilise Gmail SMTP et nécessite un mot de passe d’application Gmail
-(l’authentification à deux facteurs doit être activée sur le compte expéditeur).
-L’application utilise STARTTLS sur le port 587, puis essaie TLS sur le port 465
-si la connexion échoue avant l’envoi. Streamlit Cloud doit autoriser les
-connexions SMTP sortantes pour que les notifications puissent être envoyées.
+L’envoi utilise l’API Gmail en HTTPS avec OAuth 2.0, sans connexion SMTP.
+Dans Google Cloud Console, créez un projet, activez Gmail API, configurez l’écran
+de consentement OAuth, puis créez un identifiant OAuth de type « Application
+Web ». Ajoutez l’URI de redirection
+`https://developers.google.com/oauthplayground` et le compte Gmail expéditeur
+comme utilisateur test si l’écran de consentement est en mode test.
+
+Dans OAuth Playground, utilisez vos propres identifiants OAuth, demandez
+l’autorisation `https://www.googleapis.com/auth/gmail.send`, autorisez l’accès
+avec le compte expéditeur en demandant un accès hors ligne (`offline`), puis
+échangez le code contre des jetons. Copiez le jeton de renouvellement
+(`refresh_token`) dans les secrets Streamlit. Si l’écran OAuth reste en mode
+test, le jeton de renouvellement peut expirer après sept jours et nécessiter
+une nouvelle autorisation. L’adresse `sender_email` doit correspondre au compte
+Gmail OAuth ou à un alias autorisé par ce compte.
 Configurez les secrets suivants dans **Manage app > Settings > Secrets** sur
 Streamlit Community Cloud :
 
 ```toml
 [email]
 sender_email = "votre-adresse@gmail.com"
-app_password = "mot-de-passe-d-application"
+google_client_id = "votre-client-id"
+google_client_secret = "votre-client-secret"
+google_refresh_token = "votre-refresh-token"
 ```
 
 En local, placez la même configuration dans `.streamlit/secrets.toml` à la
 racine du projet. Ce fichier ne doit jamais être ajouté au dépôt. Si les secrets
-ne sont pas configurés ou si Gmail refuse l’envoi, la décision d’accès reste
+ne sont pas configurés ou si Google refuse l’envoi, la décision d’accès reste
 enregistrée et l’administrateur voit un avertissement dans le panneau.
 
 Si l’application est lancée avec une base ne contenant encore aucun compte
