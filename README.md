@@ -91,25 +91,37 @@ dans ce README. Un utilisateur sans compte peut soumettre une demande d’accès
 qui doit être approuvée par un administrateur avant la connexion.
 
 Après une approbation ou un rejet, Epidemia envoie un courriel au demandeur.
-L’envoi utilise Gmail SMTP et nécessite un mot de passe d’application Gmail
-(l’authentification à deux facteurs doit être activée sur le compte expéditeur).
-L’application utilise STARTTLS sur le port 587 et réessaie sur le port TLS 465
-si la connexion est coupée avant l’envoi. Streamlit Cloud doit autoriser les
-connexions SMTP sortantes pour que les notifications puissent être envoyées.
+L’envoi utilise l’API Gmail par HTTPS et OAuth 2.0 ; il n’utilise pas SMTP ni
+de mot de passe d’application. Dans Google Cloud Console, créez un projet,
+activez Gmail API, configurez l’écran de consentement OAuth, puis créez un
+identifiant OAuth de type « Application Web ». Ajoutez
+`https://developers.google.com/oauthplayground` comme URI de redirection et
+ajoutez le compte expéditeur comme utilisateur test si l’application OAuth
+reste en mode test.
+
+Dans OAuth Playground, configurez vos propres identifiants OAuth, sélectionnez
+la portée `https://www.googleapis.com/auth/gmail.send`, autorisez l’accès avec
+le compte expéditeur et demandez un accès hors ligne pour obtenir un
+`refresh_token`. Si l’application OAuth reste en mode test, ce jeton peut
+expirer après sept jours et nécessiter une nouvelle autorisation.
 Configurez les secrets suivants dans **Manage app > Settings > Secrets** sur
 Streamlit Community Cloud :
 
 ```toml
 [email]
 sender_email = "votre-adresse@gmail.com"
-app_password = "mot-de-passe-d-application"
+google_client_id = "votre-client-id"
+google_client_secret = "votre-client-secret"
+google_refresh_token = "votre-refresh-token"
 ```
 
 Les secrets peuvent aussi être définis à la racine, sans section `[email]` :
 
 ```toml
 sender_email = "votre-adresse@gmail.com"
-app_password = "mot-de-passe-d-application"
+google_client_id = "votre-client-id"
+google_client_secret = "votre-client-secret"
+google_refresh_token = "votre-refresh-token"
 ```
 
 En local, placez la même configuration dans `.streamlit/secrets.toml` à la

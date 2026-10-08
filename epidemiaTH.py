@@ -1,12 +1,14 @@
 import datetime
+import base64
 from email.message import EmailMessage
 import hashlib
 import io
 import json
 import secrets
-import smtplib
-import ssl
 import sqlite3
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 
 from epidemia_app.provinces import (
@@ -683,24 +685,27 @@ def obtenir_tous_utilisateurs(db_path):
 
 
 def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
-    """Envoie par Gmail SMTP la décision d'accès configurée dans les secrets."""
+    """Envoie la décision d'accès via l'API Gmail HTTPS et OAuth 2.0."""
     try:
         try:
             configuration = st.secrets["email"]
         except KeyError:
             configuration = st.secrets
         adresse_expediteur = configuration["sender_email"].strip()
-        mot_de_passe_application = configuration["app_password"].replace(" ", "")
+        client_id = configuration["google_client_id"].strip()
+        client_secret = configuration["google_client_secret"].strip()
+        refresh_token = configuration["google_refresh_token"].strip()
     except (KeyError, FileNotFoundError, StreamlitSecretNotFoundError):
         return False, (
-            "Secrets SMTP manquants. Dans Streamlit Cloud, ajoutez soit une section "
-            "[email] avec sender_email et app_password, soit ces deux clés à la racine "
-            "des secrets."
+            "Secrets OAuth Gmail manquants. Configurez sender_email, google_client_id, "
+            "google_client_secret et google_refresh_token dans la section [email] "
+            "ou à la racine des secrets Streamlit."
         )
 
-    if not adresse_expediteur or not mot_de_passe_application:
+    if not all((adresse_expediteur, client_id, client_secret, refresh_token)):
         return False, (
-            "Les secrets Gmail sont incomplets : renseignez sender_email et app_password."
+            "Les secrets OAuth Gmail sont incomplets. Vérifiez les quatre valeurs "
+            "requis dans les secrets Streamlit."
         )
 
     decision = "approuvée" if approuve else "rejetée"
@@ -721,47 +726,67 @@ def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
         + "L'équipe Epidemia"
     )
 
-    etape_smtp = "connexion au serveur"
+    requete_token = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=urllib.parse.urlencode(
+            {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            }
+        ).encode("utf-8"),
+        headers={"content-type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as serveur:
-            etape_smtp = "négociation TLS"
-            serveur.ehlo()
-            serveur.starttls(context=ssl.create_default_context())
-            serveur.ehlo()
-            etape_smtp = "authentification"
-            serveur.login(adresse_expediteur, mot_de_passe_application)
-            etape_smtp = "envoi du message"
-            serveur.send_message(message)
-    except smtplib.SMTPServerDisconnected as erreur:
-        if etape_smtp == "envoi du message":
+        with urllib.request.urlopen(requete_token, timeout=20) as reponse:
+            donnees_token = json.loads(reponse.read().decode("utf-8"))
+        jeton_acces = donnees_token.get("access_token")
+        if not jeton_acces:
             return False, (
-                "La connexion Gmail a été coupée pendant l'envoi. "
-                "Vérifiez si le demandeur a reçu le courriel avant de relancer une notification."
+                "Google OAuth n'a pas fourni de jeton d'accès. Vérifiez les identifiants "
+                "et le jeton de renouvellement configurés."
             )
-
-        try:
-            with smtplib.SMTP_SSL(
-                "smtp.gmail.com",
-                465,
-                timeout=10,
-                context=ssl.create_default_context(),
-            ) as serveur:
-                serveur.login(adresse_expediteur, mot_de_passe_application)
-                serveur.send_message(message)
-        except (OSError, smtplib.SMTPException) as erreur_repli:
-            return False, (
-                f"Gmail a fermé la connexion pendant l'étape « {etape_smtp} » sur le port 587 "
-                f"({type(erreur).__name__}) ; le port 465 a aussi échoué "
-                f"({type(erreur_repli).__name__})."
-            )
-        return True, f"Un courriel a été envoyé à {email_destinataire} via le port TLS 465."
-    except (OSError, smtplib.SMTPException) as erreur:
+    except urllib.error.HTTPError as erreur:
         return False, (
-            f"L'envoi du courriel a échoué pendant l'étape « {etape_smtp} » "
+            f"Google OAuth a refusé l'authentification (HTTP {erreur.code}). "
+            "Vérifiez le client OAuth et le jeton de renouvellement."
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as erreur:
+        return False, (
+            "La connexion HTTPS à Google OAuth a échoué "
             f"({type(erreur).__name__})."
         )
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False, "Google OAuth a renvoyé une réponse invalide lors de l'authentification."
 
-    return True, f"Un courriel a été envoyé à {email_destinataire}."
+    message_brut = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
+    requete_envoi = urllib.request.Request(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        data=json.dumps({"raw": message_brut}).encode("utf-8"),
+        headers={
+            "authorization": f"Bearer {jeton_acces}",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(requete_envoi, timeout=20):
+            pass
+    except urllib.error.HTTPError as erreur:
+        return False, (
+            f"L'API Gmail a refusé le courriel (HTTP {erreur.code}). Vérifiez que Gmail API "
+            "est activée et que le compte OAuth a l'autorisation gmail.send."
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as erreur:
+        return False, (
+            "La connexion HTTPS à l'API Gmail a échoué "
+            f"({type(erreur).__name__}). Vérifiez dans Gmail si le message a été accepté "
+            "avant de réessayer."
+        )
+
+    return True, f"L'API Gmail a accepté le courriel destiné à {email_destinataire}."
 
 
 def approuver_utilisateur(db_path, user_id, admin_user, role_choisi="utilisateur"):
