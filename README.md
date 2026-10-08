@@ -93,6 +93,9 @@ qui doit être approuvée par un administrateur avant la connexion.
 Après une approbation ou un rejet, Epidemia envoie un courriel au demandeur.
 L’envoi utilise Gmail SMTP et nécessite un mot de passe d’application Gmail
 (l’authentification à deux facteurs doit être activée sur le compte expéditeur).
+L’application essaie d’abord STARTTLS sur le port 587, puis utilise TLS sur le
+port 465 si la connexion est coupée avant l’envoi. Une coupure pendant l’envoi
+n’entraîne pas de nouvel essai automatique, afin d’éviter les courriels en double.
 Configurez les secrets suivants dans **Manage app > Settings > Secrets** sur
 Streamlit Community Cloud :
 
