@@ -743,10 +743,19 @@ def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
             if not 200 <= reponse.status < 300:
                 return False, f"Brevo a refusé le courriel (HTTP {reponse.status})."
     except urllib.error.HTTPError as erreur:
-        return False, (
-            f"Brevo a refusé le courriel (HTTP {erreur.code}). Vérifiez la clé API "
-            "et que l'adresse expéditrice est vérifiée dans Brevo."
-        )
+        try:
+            details_erreur = json.loads(erreur.read().decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            details_erreur = {}
+        code_erreur = details_erreur.get("code")
+        message_erreur = details_erreur.get("message")
+        detail = ""
+        if code_erreur or message_erreur:
+            detail = f" Détail Brevo : {code_erreur or 'erreur'}"
+            if message_erreur:
+                detail += f" — {message_erreur[:500]}"
+            detail += "."
+        return False, f"Brevo a refusé le courriel (HTTP {erreur.code}).{detail}"
     except (urllib.error.URLError, TimeoutError, OSError) as erreur:
         return False, (
             "La connexion HTTPS à Brevo a échoué "
