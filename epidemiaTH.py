@@ -1,8 +1,11 @@
 import datetime
+from email.message import EmailMessage
 import hashlib
 import io
 import json
 import secrets
+import smtplib
+import ssl
 import sqlite3
 import zipfile
 
@@ -27,6 +30,7 @@ import random
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 from scipy.integrate import odeint
 from sqlalchemy import create_engine, inspect, text
 
@@ -678,17 +682,65 @@ def obtenir_tous_utilisateurs(db_path):
         return pd.DataFrame()
 
 
+def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
+    """Envoie par Gmail la décision d'accès, avec les identifiants configurés dans les secrets."""
+    try:
+        configuration = st.secrets["email"]
+        adresse_expediteur = configuration["sender_email"].strip()
+        mot_de_passe_application = configuration["app_password"].replace(" ", "")
+    except (KeyError, FileNotFoundError, StreamlitSecretNotFoundError):
+        return False, (
+            "Configurez [email].sender_email et [email].app_password dans les secrets Streamlit "
+            "pour activer les notifications."
+        )
+
+    if not adresse_expediteur or not mot_de_passe_application:
+        return False, (
+            "Les secrets Gmail sont incomplets : renseignez sender_email et app_password."
+        )
+
+    decision = "approuvée" if approuve else "rejetée"
+    message = EmailMessage()
+    message["Subject"] = f"Votre demande d'accès à Epidemia a été {decision}"
+    message["From"] = adresse_expediteur
+    message["To"] = email_destinataire
+    message.set_content(
+        f"Bonjour {nom_complet},\n\n"
+        f"Votre demande d'accès à la plateforme Epidemia a été {decision} "
+        "par l'administrateur.\n\n"
+        + (
+            "Vous pouvez maintenant vous connecter à la plateforme avec votre identifiant "
+            "et le mot de passe choisi lors de votre inscription.\n\n"
+            if approuve
+            else "Vous ne pouvez pas accéder au tableau de bord avec cette demande.\n\n"
+        )
+        + "L'équipe Epidemia"
+    )
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as serveur:
+            serveur.ehlo()
+            serveur.starttls(context=ssl.create_default_context())
+            serveur.ehlo()
+            serveur.login(adresse_expediteur, mot_de_passe_application)
+            serveur.send_message(message)
+    except (OSError, smtplib.SMTPException) as erreur:
+        return False, f"L'envoi du courriel a échoué ({type(erreur).__name__})."
+
+    return True, f"Un courriel a été envoyé à {email_destinataire}."
+
+
 def approuver_utilisateur(db_path, user_id, admin_user, role_choisi="utilisateur"):
     """Accorde la permission d'accès à un utilisateur et active son compte."""
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT username, nom_complet FROM utilisateurs WHERE id = ?", (user_id,))
+        cur.execute("SELECT username, nom_complet, email FROM utilisateurs WHERE id = ?", (user_id,))
         u = cur.fetchone()
         if not u:
             conn.close()
-            return False, "Utilisateur introuvable."
+            return False, "Utilisateur introuvable.", False
         username = u["username"]
 
         cur.execute("""
@@ -707,9 +759,16 @@ def approuver_utilisateur(db_path, user_id, admin_user, role_choisi="utilisateur
             action="APPROBATION",
             details=f"Permission d'accès accordée à @{username} ({u['nom_complet']}) - Rôle: {role_choisi}"
         )
-        return True, f"Permission accordée avec succès à @{username}."
+        email_envoye, detail_email = envoyer_notification_decision(
+            u["email"], u["nom_complet"], approuve=True
+        )
+        return (
+            True,
+            f"Permission accordée avec succès à @{username}. {detail_email}",
+            email_envoye,
+        )
     except Exception as e:
-        return False, f"Erreur lors de l'approbation : {e}"
+        return False, f"Erreur lors de l'approbation : {e}", False
 
 
 def rejeter_utilisateur(db_path, user_id, admin_user):
@@ -718,11 +777,11 @@ def rejeter_utilisateur(db_path, user_id, admin_user):
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT username, nom_complet FROM utilisateurs WHERE id = ?", (user_id,))
+        cur.execute("SELECT username, nom_complet, email FROM utilisateurs WHERE id = ?", (user_id,))
         u = cur.fetchone()
         if not u:
             conn.close()
-            return False, "Utilisateur introuvable."
+            return False, "Utilisateur introuvable.", False
         username = u["username"]
 
         cur.execute("UPDATE utilisateurs SET statut = 'rejete' WHERE id = ?", (user_id,))
@@ -737,25 +796,39 @@ def rejeter_utilisateur(db_path, user_id, admin_user):
             action="REFUS_ACCES",
             details=f"Demande d'accès de @{username} refusée par l'administrateur"
         )
-        return True, f"Demande d'accès de @{username} refusée."
+        email_envoye, detail_email = envoyer_notification_decision(
+            u["email"], u["nom_complet"], approuve=False
+        )
+        return (
+            True,
+            f"Demande d'accès de @{username} refusée. {detail_email}",
+            email_envoye,
+        )
     except Exception as e:
-        return False, f"Erreur lors du refus : {e}"
+        return False, f"Erreur lors du refus : {e}", False
 
 
 def modifier_statut_utilisateur(db_path, user_id, nouveau_statut, admin_user):
-    """Modifie le statut d'un compte (approuve, bloque, en_attente)."""
+    """Modifie le statut d'un compte et notifie les décisions sur les demandes en attente."""
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT username FROM utilisateurs WHERE id = ?", (user_id,))
+        cur.execute(
+            "SELECT username, nom_complet, email, statut FROM utilisateurs WHERE id = ?",
+            (user_id,)
+        )
         u = cur.fetchone()
         if not u:
             conn.close()
-            return False, "Utilisateur introuvable."
+            return False, "Utilisateur introuvable.", None
         if u["username"] == admin_user["username"] and nouveau_statut != "approuve":
             conn.close()
-            return False, "Vous ne pouvez pas révoquer votre propre statut d'administrateur actif."
+            return (
+                False,
+                "Vous ne pouvez pas révoquer votre propre statut d'administrateur actif.",
+                None,
+            )
 
         if nouveau_statut == "approuve":
             cur.execute("""
@@ -778,9 +851,19 @@ def modifier_statut_utilisateur(db_path, user_id, nouveau_statut, admin_user):
             action="MODIFICATION_STATUT",
             details=f"Statut du compte @{u['username']} modifié en '{nouveau_statut}'"
         )
-        return True, f"Statut de @{u['username']} mis à jour en '{nouveau_statut}'."
+        email_envoye = None
+        detail_email = ""
+        if u["statut"] == "en_attente" and nouveau_statut in ("approuve", "rejete"):
+            email_envoye, detail_email = envoyer_notification_decision(
+                u["email"], u["nom_complet"], approuve=(nouveau_statut == "approuve")
+            )
+        return (
+            True,
+            f"Statut de @{u['username']} mis à jour en '{nouveau_statut}'. {detail_email}",
+            email_envoye,
+        )
     except Exception as e:
-        return False, f"Erreur : {e}"
+        return False, f"Erreur : {e}", None
 
 
 def modifier_role_utilisateur(db_path, user_id, nouveau_role, admin_user):
@@ -1207,6 +1290,14 @@ def rendre_panneau_administration(db_path, admin_user):
     </div>
     """, unsafe_allow_html=True)
 
+    decision_admin = st.session_state.pop("notification_decision_admin", None)
+    if decision_admin:
+        message_admin, email_envoye = decision_admin
+        if email_envoye:
+            st.success(message_admin)
+        else:
+            st.warning(message_admin)
+
     stats = obtenir_statistiques_activites(db_path)
 
     # Métriques d'administration
@@ -1266,17 +1357,25 @@ def rendre_panneau_administration(db_path, admin_user):
                         col_btn1, col_btn2 = st.columns(2)
                         with col_btn1:
                             if st.button("Approuver", key=f"btn_approuver_{req['id']}", type="primary"):
-                                ok, msg = approuver_utilisateur(db_path, req["id"], admin_user, role_attrib)
+                                ok, msg, email_envoye = approuver_utilisateur(
+                                    db_path, req["id"], admin_user, role_attrib
+                                )
                                 if ok:
-                                    st.toast(msg)
+                                    st.session_state["notification_decision_admin"] = (
+                                        msg, email_envoye
+                                    )
                                     st.rerun()
                                 else:
                                     st.error(msg)
                         with col_btn2:
                             if st.button("Rejeter", key=f"btn_rejeter_{req['id']}"):
-                                ok, msg = rejeter_utilisateur(db_path, req["id"], admin_user)
+                                ok, msg, email_envoye = rejeter_utilisateur(
+                                    db_path, req["id"], admin_user
+                                )
                                 if ok:
-                                    st.toast(msg)
+                                    st.session_state["notification_decision_admin"] = (
+                                        msg, email_envoye
+                                    )
                                     st.rerun()
                                 else:
                                     st.error(msg)
@@ -1444,14 +1543,19 @@ def rendre_panneau_administration(db_path, admin_user):
                             key=f"btn_statut_{u_id_choisi}",
                             width="stretch",
                         ):
-                            ok_s, msg_s = modifier_statut_utilisateur(
+                            ok_s, msg_s, email_envoye = modifier_statut_utilisateur(
                                 db_path,
                                 u_id_choisi,
                                 nouveau_statut,
                                 admin_user,
                             )
                             if ok_s:
-                                st.toast(msg_s)
+                                if email_envoye is None:
+                                    st.toast(msg_s)
+                                else:
+                                    st.session_state["notification_decision_admin"] = (
+                                        msg_s, email_envoye
+                                    )
                                 st.rerun()
                             else:
                                 st.error(msg_s)

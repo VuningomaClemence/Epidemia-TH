@@ -90,6 +90,23 @@ administrateur configuré dans cette base ; les identifiants ne sont pas publié
 dans ce README. Un utilisateur sans compte peut soumettre une demande d’accès,
 qui doit être approuvée par un administrateur avant la connexion.
 
+Après une approbation ou un rejet, Epidemia envoie un courriel au demandeur.
+L’envoi utilise Gmail SMTP et nécessite un mot de passe d’application Gmail
+(l’authentification à deux facteurs doit être activée sur le compte expéditeur).
+Configurez les secrets suivants dans **Manage app > Settings > Secrets** sur
+Streamlit Community Cloud :
+
+```toml
+[email]
+sender_email = "votre-adresse@gmail.com"
+app_password = "mot-de-passe-d-application"
+```
+
+En local, placez la même configuration dans `.streamlit/secrets.toml` à la
+racine du projet. Ce fichier ne doit jamais être ajouté au dépôt. Si les secrets
+ne sont pas configurés ou si Gmail refuse l’envoi, la décision d’accès reste
+enregistrée et l’administrateur voit un avertissement dans le panneau.
+
 Si l’application est lancée avec une base ne contenant encore aucun compte
 administrateur, elle crée un compte initial :
 
