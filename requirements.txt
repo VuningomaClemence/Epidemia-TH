@@ -1,0 +1,10 @@
+streamlit>=1.40
+numpy
+pandas
+scipy
+SQLAlchemy
+plotly
+matplotlib
+folium
+streamlit-folium
+openpyxl
