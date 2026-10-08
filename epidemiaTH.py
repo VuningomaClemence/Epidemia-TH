@@ -725,11 +725,36 @@ def envoyer_notification_decision(email_destinataire, nom_complet, approuve):
     try:
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as serveur:
             etape_smtp = "négociation TLS"
+            serveur.ehlo()
             serveur.starttls(context=ssl.create_default_context())
+            serveur.ehlo()
             etape_smtp = "authentification"
             serveur.login(adresse_expediteur, mot_de_passe_application)
             etape_smtp = "envoi du message"
             serveur.send_message(message)
+    except smtplib.SMTPServerDisconnected as erreur:
+        if etape_smtp == "envoi du message":
+            return False, (
+                "La connexion Gmail a été coupée pendant l'envoi. "
+                "Vérifiez si le demandeur a reçu le courriel avant de relancer une notification."
+            )
+
+        try:
+            with smtplib.SMTP_SSL(
+                "smtp.gmail.com",
+                465,
+                timeout=10,
+                context=ssl.create_default_context(),
+            ) as serveur:
+                serveur.login(adresse_expediteur, mot_de_passe_application)
+                serveur.send_message(message)
+        except (OSError, smtplib.SMTPException) as erreur_repli:
+            return False, (
+                f"Gmail a fermé la connexion pendant l'étape « {etape_smtp} » sur le port 587 "
+                f"({type(erreur).__name__}) ; le port 465 a aussi échoué "
+                f"({type(erreur_repli).__name__})."
+            )
+        return True, f"Un courriel a été envoyé à {email_destinataire} via le port TLS 465."
     except (OSError, smtplib.SMTPException) as erreur:
         return False, (
             f"L'envoi du courriel a échoué pendant l'étape « {etape_smtp} » "
