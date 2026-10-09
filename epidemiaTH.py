@@ -1184,7 +1184,7 @@ def rendre_page_authentification(db_path):
                     }
                     st.session_state["utilisateur_connecte"] = user_session
                     st.session_state["epidemia_session_token"] = session_token
-                    ecrire_cookie_session(session_token)
+                    ecrire_cookie_session(session_token, recharger=False)
                     enregistrer_activite(
                         db_path=db_path,
                         user_id=user_session["id"],
@@ -1193,7 +1193,7 @@ def rendre_page_authentification(db_path):
                         action="CONNEXION",
                         details=f"Connexion réussie de {user_session['nom_complet']} ({user_session['role']})"
                     )
-                    st.stop()
+                    st.rerun()
                 elif code_statut == "en_attente":
                     if user:
                         enregistrer_activite(
